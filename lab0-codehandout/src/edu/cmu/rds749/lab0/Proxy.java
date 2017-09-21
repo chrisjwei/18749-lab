@@ -1,11 +1,13 @@
 package edu.cmu.rds749.lab0;
 
 import Ice.Current;
-import Ice.Exception;
 import edu.cmu.rds749.common.AbstractProxy;
 
 /**
  * Created by jiaqi on 8/28/16.
+ *
+ * Chris Wei    (cjwei)
+ * Mark Horvath (mhorvath)
  *
  * Implements the Proxy.
  */

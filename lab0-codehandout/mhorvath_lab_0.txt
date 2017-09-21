@@ -1,0 +1,56 @@
+Q1:
+=====INPUT=====
+check
+update 100 
+update -5
+check
+update -100
+update 35
+update -2
+check
+exit
+=====SERVER OUTPUT=====
+(ServerMain: Listening on port: [10000])
+(readBalance:local address = 127.0.1.1:10000 / remote address = 127.0.0.1:47576)
+(changeBalance:local address = 127.0.1.1:10000 / remote address = 127.0.0.1:47576)
+(changeBalance:local address = 127.0.1.1:10000 / remote address = 127.0.0.1:47576)
+(readBalance:local address = 127.0.1.1:10000 / remote address = 127.0.0.1:47576)
+(changeBalance:local address = 127.0.1.1:10000 / remote address = 127.0.0.1:47576)
+(changeBalance:local address = 127.0.1.1:10000 / remote address = 127.0.0.1:47576)
+(changeBalance:local address = 127.0.1.1:10000 / remote address = 127.0.0.1:47576)
+(readBalance:local address = 127.0.1.1:10000 / remote address = 127.0.0.1:47576)
+=====END OUTPUT=====
+
+Q3:
+=====INPUT=====
+check
+update 100 
+update -5
+check
+update -100
+update 35
+update -2
+check
+exit
+=====PROXY OUTPUT=====
+(ProxyMain: Listening for requests on port: [10002])
+(ProxyMain: Connecting to server: [localhost] at port: 10000)
+(In Proxy)
+(In Proxy)
+(In Proxy)
+(In Proxy)
+(In Proxy)
+(In Proxy)
+(In Proxy)
+(In Proxy)
+=====SERVER OUTPUT=====
+(ServerMain: Listening on port: [10000])
+(readBalance:local address = 127.0.0.1:10000 / remote address = 127.0.0.1:59372)
+(changeBalance:local address = 127.0.0.1:10000 / remote address = 127.0.0.1:59372)
+(changeBalance:local address = 127.0.0.1:10000 / remote address = 127.0.0.1:59372)
+(readBalance:local address = 127.0.0.1:10000 / remote address = 127.0.0.1:59372)
+(changeBalance:local address = 127.0.0.1:10000 / remote address = 127.0.0.1:59372)
+(changeBalance:local address = 127.0.0.1:10000 / remote address = 127.0.0.1:59372)
+(changeBalance:local address = 127.0.0.1:10000 / remote address = 127.0.0.1:59372)
+(readBalance:local address = 127.0.0.1:10000 / remote address = 127.0.0.1:59372)
+=====END OUTPUT=====
