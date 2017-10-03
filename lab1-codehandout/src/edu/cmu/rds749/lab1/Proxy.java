@@ -1,5 +1,6 @@
 package edu.cmu.rds749.lab1;
 
+import com.sun.security.ntlm.Server;
 import edu.cmu.rds749.common.AbstractProxy;
 import edu.cmu.rds749.common.BankAccountStub;
 import org.apache.commons.configuration2.Configuration;
@@ -40,15 +41,19 @@ public class Proxy extends AbstractProxy
     public class ConcServerPool {
         ReadWriteLock serversRWLock;
         HashMap<Long, ServerConfig> servers;
+        HashMap<Long, ServerConfig> deadServers;
         long activeServerId;
         long serverIdCounter;
+        long expirationTimestamp;
 
         public ConcServerPool()
         {
             this.activeServerId = -1;
             this.serverIdCounter = 0;
             this.servers = new HashMap<>();
+            this.deadServers = new HashMap<>();
             this.serversRWLock = new ReentrantReadWriteLock();
+            //TODO: spawn thread to handle server heartbeat expiration
         }
 
         /**
@@ -102,16 +107,14 @@ public class Proxy extends AbstractProxy
          * Removes the current server from the server pool if the id matches the activeServerId
          * @param id
          */
-        public void removeServer(long id){
+        public void declareDeadServer(long id){
             this.serversRWLock.writeLock().lock();
-            if (this.servers.containsKey(id)){
-                this.servers.remove(id);
-            }
+            //TODO: think about race condition!!
             if (this.activeServerId == id){
+                this.deadServers.put(id, this.servers.remove(id));
                 if (this.servers.size() == 0){
                     this.activeServerId = -1;
-                }
-                else{
+                } else{
                     this.activeServerId = this.servers.keySet().iterator().next();
                 }
             }
@@ -134,7 +137,7 @@ public class Proxy extends AbstractProxy
 
         while(true)
         {
-            cfg = this.pool.getCurrentServerConfig();
+            cfg = this.pool.getCurrentServerConfig(); // is it ok to get stale data?
             stub = this.connectToServer(cfg.hostname, cfg.port);
             try
             {
@@ -142,7 +145,7 @@ public class Proxy extends AbstractProxy
             }
             catch (BankAccountStub.NoConnectionException e)
             {
-                this.pool.removeServer(cfg.id);
+                this.pool.declareDeadServer(cfg.id);
                 continue;
             }
             return balance;
@@ -165,7 +168,7 @@ public class Proxy extends AbstractProxy
             }
             catch (BankAccountStub.NoConnectionException e)
             {
-                this.pool.removeServer(cfg.id);
+                this.pool.declareDeadServer(cfg.id);
                 continue;
             }
             return balance;
@@ -174,16 +177,15 @@ public class Proxy extends AbstractProxy
 
     public long register(String hostname, int port)
     {
-        //long uid = UUID.fromString(hostname + Integer.toString(port)).getMostSignificantBits();
-        long uid = this.pool.registerServer(hostname, port);
-        // TODO: fork off a process to heartbeat
-        return uid;
+        return this.pool.registerServer(hostname, port);
     }
 
     public void heartbeat(long ID, long serverTimestamp)
     {
-        ServerConfig config = this.pool.getServerConfig(ID);
-        //TODO: how do you heartbeat?
-        //BankAccountStub acc = this.connectToServer(config.hostname, config.port);
+        //TODO: check if we should be using serverTimestamp or the proxy timestamp?
+
+        //TODO: get the ServerConfig, no matter where it is
+        //TODO: if serverTimeStamp > lastTimeStamp, then revive if need be
+        //TODO: update with new serverTimeStamp
     }
 }
