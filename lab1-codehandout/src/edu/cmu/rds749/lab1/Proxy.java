@@ -1,6 +1,5 @@
 package edu.cmu.rds749.lab1;
 
-import com.sun.security.ntlm.Server;
 import edu.cmu.rds749.common.AbstractProxy;
 import edu.cmu.rds749.common.BankAccountStub;
 import org.apache.commons.configuration2.Configuration;
@@ -18,7 +17,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 public class Proxy extends AbstractProxy
 {
     long heartbeatInterval;
-    ConcServerPool pool;
+    ReadWriteLock poolRWLock;
+    ServerPool pool;
 
     public class ServerConfig
     {
@@ -38,21 +38,19 @@ public class Proxy extends AbstractProxy
      * A threadsafe server list that contains the mappings of serverids to hostname and port and the current active
      * server id
      */
-    public class ConcServerPool {
-        ReadWriteLock serversRWLock;
+    public class ServerPool {
         HashMap<Long, ServerConfig> servers;
         HashMap<Long, ServerConfig> deadServers;
         long activeServerId;
         long serverIdCounter;
         long expirationTimestamp;
 
-        public ConcServerPool()
+        public ServerPool()
         {
             this.activeServerId = -1;
             this.serverIdCounter = 0;
             this.servers = new HashMap<>();
             this.deadServers = new HashMap<>();
-            this.serversRWLock = new ReentrantReadWriteLock();
             //TODO: spawn thread to handle server heartbeat expiration
         }
 
@@ -64,28 +62,22 @@ public class Proxy extends AbstractProxy
         public ServerConfig getServerConfig(long id)
         {
             ServerConfig cfg;
-            this.serversRWLock.readLock().lock();
             cfg = this.servers.get(id);
-            this.serversRWLock.readLock().unlock();
             return cfg;
         }
 
         /**
          * Gets the current server config from the list of servers
          * @return the ServerConfig of the current active server
-         * @throws NoServersAvailable
          */
-        public ServerConfig getCurrentServerConfig() throws NoServersAvailable
+        public ServerConfig getCurrentServerConfig()
         {
             ServerConfig cfg;
-            this.serversRWLock.readLock().lock();
             if (this.activeServerId == -1)
             {
-                this.serversRWLock.readLock().unlock();
-                throw new NoServersAvailable();
+                return null;
             }
             cfg = this.servers.get(activeServerId);
-            this.serversRWLock.readLock().unlock();
             return cfg;
         }
 
@@ -96,10 +88,8 @@ public class Proxy extends AbstractProxy
          * @return the server's unique id
          */
         public long registerServer(String hostname, int port){
-            this.serversRWLock.writeLock().lock();
             long id = this.serverIdCounter++;
             this.servers.put(id, new ServerConfig(hostname, port, id));
-            this.serversRWLock.writeLock().unlock();
             return id;
         }
 
@@ -108,17 +98,19 @@ public class Proxy extends AbstractProxy
          * @param id
          */
         public void declareDeadServer(long id){
-            this.serversRWLock.writeLock().lock();
-            //TODO: think about race condition!!
+            // if declaring the current server as dead, select a new active server
             if (this.activeServerId == id){
-                this.deadServers.put(id, this.servers.remove(id));
-                if (this.servers.size() == 0){
+                if (this.servers.size() == 0)
+                {
                     this.activeServerId = -1;
-                } else{
+                }
+                else
+                {
                     this.activeServerId = this.servers.keySet().iterator().next();
                 }
             }
-            this.serversRWLock.writeLock().unlock();
+            // move the config from live to dead pool
+            this.deadServers.put(id, this.servers.remove(id));
         }
     }
 
@@ -126,7 +118,8 @@ public class Proxy extends AbstractProxy
     {
         super(config);
         this.heartbeatInterval = config.getLong("heartbeatIntervalMillis");
-        this.pool = new ConcServerPool();
+        this.pool = new ServerPool();
+        this.poolRWLock = new ReentrantReadWriteLock();
     }
 
     public int readBalance() throws NoServersAvailable
@@ -137,7 +130,13 @@ public class Proxy extends AbstractProxy
 
         while(true)
         {
-            cfg = this.pool.getCurrentServerConfig(); // is it ok to get stale data?
+            this.poolRWLock.writeLock().lock(); // we need a write lock because we could modify serverPool if exception
+            cfg = this.pool.getCurrentServerConfig();
+            if (cfg == null)
+            {
+                this.poolRWLock.writeLock().unlock();
+                throw new NoServersAvailable();
+            }
             stub = this.connectToServer(cfg.hostname, cfg.port);
             try
             {
@@ -146,8 +145,10 @@ public class Proxy extends AbstractProxy
             catch (BankAccountStub.NoConnectionException e)
             {
                 this.pool.declareDeadServer(cfg.id);
+                this.poolRWLock.writeLock().unlock();
                 continue;
             }
+            this.poolRWLock.writeLock().unlock();
             return balance;
         }
     }
@@ -160,7 +161,13 @@ public class Proxy extends AbstractProxy
 
         while(true)
         {
+            this.poolRWLock.writeLock().lock();
             cfg = this.pool.getCurrentServerConfig();
+            if (cfg == null)
+            {
+                this.poolRWLock.writeLock().unlock();
+                throw new NoServersAvailable();
+            }
             stub = this.connectToServer(cfg.hostname, cfg.port);
             try
             {
@@ -169,15 +176,20 @@ public class Proxy extends AbstractProxy
             catch (BankAccountStub.NoConnectionException e)
             {
                 this.pool.declareDeadServer(cfg.id);
+                this.poolRWLock.writeLock().unlock();
                 continue;
             }
+            this.poolRWLock.writeLock().unlock();
             return balance;
         }
     }
 
     public long register(String hostname, int port)
     {
-        return this.pool.registerServer(hostname, port);
+        this.poolRWLock.writeLock().lock();
+        long uid = this.pool.registerServer(hostname, port);
+        this.poolRWLock.writeLock().unlock();
+        return uid;
     }
 
     public void heartbeat(long ID, long serverTimestamp)
