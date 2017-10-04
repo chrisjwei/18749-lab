@@ -1,5 +1,6 @@
 package edu.cmu.rds749.lab1;
 
+import com.sun.security.ntlm.Server;
 import edu.cmu.rds749.common.AbstractProxy;
 import edu.cmu.rds749.common.BankAccountStub;
 import org.apache.commons.configuration2.Configuration;
@@ -26,11 +27,15 @@ public class Proxy extends AbstractProxy
         public String hostname;
         public int port;
         public long id;
+        public boolean alive;
+        public long lastHeartbeat;
 
         public ServerConfig(String hostname, int port, long id){
             this.hostname = hostname;
             this.port = port;
             this.id = id;
+            this.alive = true;
+            this.lastHeartbeat = System.currentTimeMillis();
         }
     }
 
@@ -40,7 +45,6 @@ public class Proxy extends AbstractProxy
      */
     public class ServerPool {
         HashMap<Long, ServerConfig> servers;
-        HashMap<Long, ServerConfig> deadServers;
         long activeServerId;
         long serverIdCounter;
         long expirationTimestamp;
@@ -50,7 +54,6 @@ public class Proxy extends AbstractProxy
             this.activeServerId = -1;
             this.serverIdCounter = 0;
             this.servers = new HashMap<>();
-            this.deadServers = new HashMap<>();
             //TODO: spawn thread to handle server heartbeat expiration
         }
 
@@ -61,9 +64,7 @@ public class Proxy extends AbstractProxy
          */
         public ServerConfig getServerConfig(long id)
         {
-            ServerConfig cfg;
-            cfg = this.servers.get(id);
-            return cfg;
+            return this.servers.get(id);
         }
 
         /**
@@ -98,19 +99,22 @@ public class Proxy extends AbstractProxy
          * @param id
          */
         public void declareDeadServer(long id){
+            ServerConfig cfg, nextCfg;
             // if declaring the current server as dead, select a new active server
             if (this.activeServerId == id){
-                if (this.servers.size() == 0)
-                {
-                    this.activeServerId = -1;
-                }
-                else
-                {
-                    this.activeServerId = this.servers.keySet().iterator().next();
+                Iterator<ServerConfig> it = this.servers.values().iterator();
+                this.activeServerId = -1;
+                while(it.hasNext()){
+                    nextCfg = it.next();
+                    if (nextCfg.alive){
+                        this.activeServerId = nextCfg.id;
+                        break;
+                    }
                 }
             }
-            // move the config from live to dead pool
-            this.deadServers.put(id, this.servers.remove(id));
+            // declare the server dead
+            cfg = this.servers.get(id);
+            cfg.alive = false; // TODO: does this modify the object?
         }
     }
 
@@ -195,9 +199,16 @@ public class Proxy extends AbstractProxy
     public void heartbeat(long ID, long serverTimestamp)
     {
         //TODO: check if we should be using serverTimestamp or the proxy timestamp?
-
-        //TODO: get the ServerConfig, no matter where it is
-        //TODO: if serverTimeStamp > lastTimeStamp, then revive if need be
-        //TODO: update with new serverTimeStamp
+        this.poolRWLock.writeLock().lock();
+        ServerConfig cfg = this.pool.getServerConfig(ID);
+        // check heartbeat strictly monotonic
+        if (cfg.lastHeartbeat < serverTimestamp)
+        {
+            if (!cfg.alive)
+            {
+                cfg.alive = true;
+            }
+            cfg.lastHeartbeat = serverTimestamp;
+        }
     }
 }
