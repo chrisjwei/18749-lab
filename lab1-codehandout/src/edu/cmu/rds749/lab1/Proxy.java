@@ -146,16 +146,11 @@ public class Proxy extends AbstractProxy
                 throw new NoServersAvailable();
             }
             stub = this.connectToServer(cfg.hostname, cfg.port);
-            if (stub == null){
-                this.pool.declareDeadServer(cfg.id);
-                this.poolRWLock.writeLock().unlock();
-                continue;
-            }
             try
             {
                 balance = stub.readBalance();
             }
-            catch (BankAccountStub.NoConnectionException e)
+            catch (BankAccountStub.NoConnectionException | NullPointerException e)
             {
                 this.pool.declareDeadServer(cfg.id);
                 this.poolRWLock.writeLock().unlock();
@@ -186,7 +181,7 @@ public class Proxy extends AbstractProxy
             {
                 balance = stub.changeBalance(update);
             }
-            catch (BankAccountStub.NoConnectionException e)
+            catch (BankAccountStub.NoConnectionException | NullPointerException e)
             {
                 this.pool.declareDeadServer(cfg.id);
                 this.poolRWLock.writeLock().unlock();
