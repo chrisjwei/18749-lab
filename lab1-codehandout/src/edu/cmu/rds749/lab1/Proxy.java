@@ -6,9 +6,15 @@ import edu.cmu.rds749.common.BankAccountStub;
 import org.apache.commons.configuration2.Configuration;
 import rds749.NoServersAvailable;
 
+import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+
 
 /**
  * Created by jiaqi on 8/28/16.
@@ -20,6 +26,7 @@ public class Proxy extends AbstractProxy
     long heartbeatInterval;
     ReadWriteLock poolRWLock;
     ServerPool pool;
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
     public class ServerConfig
     {
@@ -103,6 +110,7 @@ public class Proxy extends AbstractProxy
          * @param id
          */
         public void declareDeadServer(long id){
+            System.out.printf("Server id %d declared dead%n", id);
             ServerConfig cfg, nextCfg;
             // if declaring the current server as dead, select a new active server
             if (this.activeServerId == id){
@@ -128,6 +136,22 @@ public class Proxy extends AbstractProxy
         this.heartbeatInterval = config.getLong("heartbeatIntervalMillis");
         this.pool = new ServerPool();
         this.poolRWLock = new ReentrantReadWriteLock();
+        Proxy p = this;
+        this.scheduler.scheduleAtFixedRate(new Runnable(){
+            public void run(){
+                System.out.println("Checking for expired servers.");
+                p.poolRWLock.writeLock().lock();
+                Iterator<Long> it = pool.servers.keySet().iterator();
+                long expirationTime = System.currentTimeMillis() - 2*p.heartbeatInterval;
+                while(it.hasNext()){
+                    ServerConfig cfg = pool.servers.get(it.next());
+                    if (cfg.alive && cfg.lastHeartbeatLocal < expirationTime){
+                        p.pool.declareDeadServer(cfg.id);
+                    }
+                }
+                p.poolRWLock.writeLock().unlock();
+            }
+        },0, this.config.getLong("heartbeatIntervalMillis"), TimeUnit.MILLISECONDS);
     }
 
     public int readBalance() throws NoServersAvailable

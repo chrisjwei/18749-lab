@@ -2,5 +2,5 @@
 <configuration>
     <proxyHost>localhost</proxyHost>
     <proxyPort>10002</proxyPort>
-    <heartbeatIntervalMillis>5000</heartbeatIntervalMillis>
+    <heartbeatIntervalMillis>6000</heartbeatIntervalMillis>
 </configuration>
