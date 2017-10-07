@@ -92,6 +92,9 @@ public class Proxy extends AbstractProxy
         public long registerServer(String hostname, int port){
             long id = this.serverIdCounter++;
             this.servers.put(id, new ServerConfig(hostname, port, id));
+            if (this.activeServerId == -1){
+                this.activeServerId = id;
+            }
             return id;
         }
 
@@ -115,7 +118,7 @@ public class Proxy extends AbstractProxy
             }
             // declare the server dead
             cfg = this.servers.get(id);
-            cfg.alive = false; // TODO: does this modify the object?
+            cfg.alive = false;
         }
     }
 
@@ -143,6 +146,11 @@ public class Proxy extends AbstractProxy
                 throw new NoServersAvailable();
             }
             stub = this.connectToServer(cfg.hostname, cfg.port);
+            if (stub == null){
+                this.pool.declareDeadServer(cfg.id);
+                this.poolRWLock.writeLock().unlock();
+                continue;
+            }
             try
             {
                 balance = stub.readBalance();
@@ -194,11 +202,13 @@ public class Proxy extends AbstractProxy
         this.poolRWLock.writeLock().lock();
         long uid = this.pool.registerServer(hostname, port);
         this.poolRWLock.writeLock().unlock();
+        System.out.printf("Registered %s:%d with uid %d %n", hostname, port, uid);
         return uid;
     }
 
     public void heartbeat(long ID, long serverTimestamp)
     {
+        System.out.printf("Got heartbeat from %d with timestamp %d%n", ID, serverTimestamp);
         //TODO: check if we should be using serverTimestamp or the proxy timestamp?
         this.poolRWLock.writeLock().lock();
         ServerConfig cfg = this.pool.getServerConfig(ID);

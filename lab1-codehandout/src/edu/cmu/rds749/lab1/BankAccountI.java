@@ -20,6 +20,7 @@ public class BankAccountI extends AbstractServer
     private int balance = 0;
     private long serverId = -1;
     private ProxyControl ctl; // TODO: how is doStart ever called?
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
     public BankAccountI(Configuration config) {
         super(config);
@@ -27,9 +28,19 @@ public class BankAccountI extends AbstractServer
     }
 
     protected void doStart(ProxyControl ctl) throws Exception {
-        this.serverId = ctl.register(this.config.getString("serverHost"), this.config.getInt("serverPort"));
-        //TODO: fork thread for heartbeats
-        //TODO: start heartbeat with server
+        long id = ctl.register(this.config.getString("serverHost"), this.config.getInt("serverPort"));
+        this.serverId = id;
+        this.scheduler.scheduleAtFixedRate(new Runnable(){
+            public void run(){
+                System.out.printf("heartbeating proxy from serverId=%d...%n", id);
+                try{
+                    ctl.heartbeat(id, System.currentTimeMillis());
+                } catch (IOException e){
+                    System.out.println("IO exception raised.");
+                    //TODO: should we retry right away or just try at next interval?
+                }
+            }
+        },0, this.config.getLong("heartbeatIntervalMillis"), TimeUnit.MILLISECONDS);
     }
 
     protected int handleReadBalance() {
