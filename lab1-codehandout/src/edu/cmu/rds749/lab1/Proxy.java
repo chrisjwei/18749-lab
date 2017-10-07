@@ -23,19 +23,20 @@ public class Proxy extends AbstractProxy
 
     public class ServerConfig
     {
-
         public String hostname;
         public int port;
         public long id;
         public boolean alive;
-        public long lastHeartbeat;
+        public long lastHeartbeatLocal;
+        public long lastHeartbeatRemote;
 
         public ServerConfig(String hostname, int port, long id){
             this.hostname = hostname;
             this.port = port;
             this.id = id;
             this.alive = true;
-            this.lastHeartbeat = System.currentTimeMillis();
+            this.lastHeartbeatLocal = System.currentTimeMillis();
+            this.lastHeartbeatRemote = 0;
         }
     }
 
@@ -202,13 +203,15 @@ public class Proxy extends AbstractProxy
         this.poolRWLock.writeLock().lock();
         ServerConfig cfg = this.pool.getServerConfig(ID);
         // check heartbeat strictly monotonic
-        if (cfg.lastHeartbeat < serverTimestamp)
+        if (cfg.lastHeartbeatRemote < serverTimestamp)
         {
             if (!cfg.alive)
             {
                 cfg.alive = true;
             }
-            cfg.lastHeartbeat = serverTimestamp;
+            cfg.lastHeartbeatRemote = serverTimestamp;
+            cfg.lastHeartbeatLocal = System.currentTimeMillis();
         }
+        this.poolRWLock.writeLock().unlock();
     }
 }
