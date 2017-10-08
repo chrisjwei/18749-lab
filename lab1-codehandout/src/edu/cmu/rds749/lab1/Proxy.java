@@ -110,8 +110,11 @@ public class Proxy extends AbstractProxy
         public void declareDeadServer(long id){
             System.out.printf("Server id %d declared dead%n", id);
             ServerConfig cfg, nextCfg;
+            // declare the server dead
+            cfg = this.servers.get(id);
+            cfg.alive = false;
             // if declaring the current server as dead, select a new active server
-            if (this.activeServerId == id){
+            if (this.activeServerId == id) {
                 Iterator<ServerConfig> it = this.servers.values().iterator();
                 this.activeServerId = -1;
                 while(it.hasNext()){
@@ -122,9 +125,6 @@ public class Proxy extends AbstractProxy
                     }
                 }
             }
-            // declare the server dead
-            cfg = this.servers.get(id);
-            cfg.alive = false;
         }
     }
 
@@ -135,9 +135,11 @@ public class Proxy extends AbstractProxy
         this.pool = new ServerPool();
         this.poolRWLock = new ReentrantReadWriteLock();
         final Proxy p = this;
+
         this.scheduler.scheduleAtFixedRate(new Runnable(){
             public void run(){
                 System.out.println("Checking for expired servers.");
+
                 p.poolRWLock.writeLock().lock();
                 Iterator<Long> it = pool.servers.keySet().iterator();
                 long expirationTime = System.currentTimeMillis() - 2*p.heartbeatInterval;
@@ -226,7 +228,6 @@ public class Proxy extends AbstractProxy
     public void heartbeat(long ID, long serverTimestamp)
     {
         System.out.printf("Got heartbeat from %d with timestamp %d%n", ID, serverTimestamp);
-        //TODO: check if we should be using serverTimestamp or the proxy timestamp?
         this.poolRWLock.writeLock().lock();
         ServerConfig cfg = this.pool.getServerConfig(ID);
         // check heartbeat strictly monotonic

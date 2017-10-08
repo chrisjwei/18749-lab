@@ -27,8 +27,8 @@ public class BankAccountI extends AbstractServer
         this.config = config;
     }
 
-    protected void doStart(ProxyControl ctl) throws Exception {
-        long id = ctl.register(this.config.getString("serverHost"), this.config.getInt("serverPort"));
+    protected void doStart(final ProxyControl ctl) throws Exception {
+        final long id = ctl.register(this.config.getString("serverHost"), this.config.getInt("serverPort"));
         this.serverId = id;
         this.scheduler.scheduleAtFixedRate(new Runnable(){
             public void run(){
