@@ -1,12 +1,10 @@
 package edu.cmu.rds749.lab1;
 
-import com.sun.security.ntlm.Server;
 import edu.cmu.rds749.common.AbstractProxy;
 import edu.cmu.rds749.common.BankAccountStub;
 import org.apache.commons.configuration2.Configuration;
 import rds749.NoServersAvailable;
 
-import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -136,7 +134,7 @@ public class Proxy extends AbstractProxy
         this.heartbeatInterval = config.getLong("heartbeatIntervalMillis");
         this.pool = new ServerPool();
         this.poolRWLock = new ReentrantReadWriteLock();
-        Proxy p = this;
+        final Proxy p = this;
         this.scheduler.scheduleAtFixedRate(new Runnable(){
             public void run(){
                 System.out.println("Checking for expired servers.");
