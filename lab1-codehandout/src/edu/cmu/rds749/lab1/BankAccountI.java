@@ -32,11 +32,11 @@ public class BankAccountI extends AbstractServer
         this.serverId = id;
         this.scheduler.scheduleAtFixedRate(new Runnable(){
             public void run(){
-                System.out.printf("heartbeating proxy from serverId=%d...%n", id);
+ //               System.out.printf("heartbeating proxy from serverId=%d...%n", id);
                 try{
                     ctl.heartbeat(id, System.currentTimeMillis());
                 } catch (IOException e){
-                    System.out.println("IO exception raised.");
+//                    System.out.println("IO exception raised.");
                     //TODO: should we retry right away or just try at next interval?
                 }
             }

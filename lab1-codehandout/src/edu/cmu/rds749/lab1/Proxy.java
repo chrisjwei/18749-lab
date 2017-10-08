@@ -103,7 +103,7 @@ public class Proxy extends AbstractProxy {
          * @param id
          */
         public void declareDeadServer(long id) {
-            System.out.printf("Server id %d declared dead%n", id);
+ //           System.out.printf("Server id %d declared dead%n", id);
             ServerConfig cfg, nextCfg;
             // declare the server dead
             cfg = this.servers.get(id);
@@ -123,7 +123,7 @@ public class Proxy extends AbstractProxy {
         }
 
         public void declareAliveServer(long id) {
-            System.out.printf("Server id %d declared alive%n", id);
+   //         System.out.printf("Server id %d declared alive%n", id);
             ServerConfig cfg;
             cfg = this.servers.get(id);
             cfg.alive = true;
@@ -142,7 +142,7 @@ public class Proxy extends AbstractProxy {
 
         this.scheduler.scheduleAtFixedRate(new Runnable() {
             public void run() {
-                System.out.println("Checking for expired servers.");
+ //               System.out.println("Checking for expired servers.");
 
                 p.poolRWLock.writeLock().lock();
                 Iterator<Long> it = pool.servers.keySet().iterator();
@@ -212,12 +212,12 @@ public class Proxy extends AbstractProxy {
         this.poolRWLock.writeLock().lock();
         long uid = this.pool.registerServer(hostname, port);
         this.poolRWLock.writeLock().unlock();
-        System.out.printf("Registered %s:%d with uid %d %n", hostname, port, uid);
+ //       System.out.printf("Registered %s:%d with uid %d %n", hostname, port, uid);
         return uid;
     }
 
     public void heartbeat(long ID, long serverTimestamp) {
-        System.out.printf("Got heartbeat from %d with timestamp %d%n", ID, serverTimestamp);
+ //       System.out.printf("Got heartbeat from %d with timestamp %d%n", ID, serverTimestamp);
         this.poolRWLock.writeLock().lock();
         ServerConfig cfg = this.pool.getServerConfig(ID);
         // check heartbeat strictly monotonic
