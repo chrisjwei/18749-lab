@@ -1,0 +1,29 @@
+Client> check
+0
+Client> update 1
+1
+Client> update 2
+3
+Client> update 3
+6
+Client> update 4
+10
+Client> update 5
+15
+Client> check
+15
+################################ Active server killed now #####################
+Client> check
+0
+Client> update 10
+10
+Client> update 20
+30
+Client> update 30
+60
+Client> update 40
+100
+Client> update 50
+150
+Client> check
+150
