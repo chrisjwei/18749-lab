@@ -4,10 +4,12 @@ import edu.cmu.rds749.common.AbstractProxy;
 import edu.cmu.rds749.common.BankAccountStub;
 import org.apache.commons.configuration2.Configuration;
 
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  *
@@ -55,6 +57,8 @@ public class Proxy extends AbstractProxy
 
     private ConcurrentLinkedQueue<Message> messageQueue;
     private ConcurrentHashMap<Integer,PendingMessageRecord> pendingMessageRecords;
+    private Lock quiescenceLock;
+    private Condition quiescenceCondition;
     private ConcurrentHashMap<Long, BankAccountStub> servers;
 
     public Proxy(Configuration config)
@@ -63,12 +67,57 @@ public class Proxy extends AbstractProxy
         this.messageQueue = new ConcurrentLinkedQueue<>();
         this.pendingMessageRecords = new ConcurrentHashMap<>();
         this.servers = new ConcurrentHashMap<>();
+        this.quiescenceLock = new ReentrantLock();
+        this.quiescenceCondition = this.quiescenceLock.newCondition();
     }
 
     @Override
     protected void serverRegistered(long id, BankAccountStub stub)
     {
-        
+        BankAccountStub existingStub;
+        Long existingId;
+        Enumeration<BankAccountStub> stubEnum;
+        Enumeration<Long> idEnum;
+        int state;
+        if (servers.isEmpty()){
+            servers.put(id, stub);
+            return;
+        }
+        this.quiescenceLock.lock();
+        try {
+            while (!pendingMessageRecords.isEmpty()) {
+                this.quiescenceCondition.await();
+            }
+            stubEnum = servers.elements();
+            idEnum = servers.keys();
+            try {
+                while(true){
+                    existingStub = stubEnum.nextElement();
+                    existingId = idEnum.nextElement();
+                    try {
+                        state = existingStub.getState();
+                    } catch (BankAccountStub.NoConnectionException e){
+                        invalidateServer(existingId);
+                        continue;
+                    }
+                    break;
+                }
+                try {
+                    stub.setState(state);
+                } catch (BankAccountStub.NoConnectionException e){
+                    this.quiescenceLock.unlock();
+                    return;
+                }
+                servers.put(id, stub);
+            } catch (NoSuchElementException e){
+                // all other servers died before quiescence was achieved
+                servers.put(id, stub);
+            }
+        } catch (InterruptedException e){
+            // TODO: probably don't need to do anything here
+        } finally{
+            this.quiescenceLock.unlock();
+        }
     }
 
     // called by Client
@@ -94,6 +143,34 @@ public class Proxy extends AbstractProxy
     protected void endChangeBalance(long serverid, int reqid, int balance)
     {
         System.out.println("(In Proxy)");
+    }
+
+    private void sendToAllServers(Message message){
+        return; // TODO
+    }
+
+    private void invalidateServer(long serverid){
+        List l = new ArrayList<Long>();
+        boolean removedAtleastOneRec = false;
+        l.add(serverid);
+        serversFailed(l);
+        servers.remove(serverid);
+        for (PendingMessageRecord rec : pendingMessageRecords.values()){
+            // only happen in non-quiescent mode
+            rec.serverids.remove(serverid);
+            if (rec.serverids.isEmpty()) {
+                if (!rec.suppress){
+                    // tell client that all servers ahve failed
+                }
+                pendingMessageRecords.remove(rec);
+                removedAtleastOneRec = true;
+            }
+        }
+        if (pendingMessageRecords.isEmpty() && removedAtleastOneRec){
+            quiescenceLock.lock();
+            quiescenceCondition.signal();
+            quiescenceLock.unlock();
+        }
     }
 
     @Override
