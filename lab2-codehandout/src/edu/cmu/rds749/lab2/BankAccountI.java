@@ -14,6 +14,8 @@ public class BankAccountI extends AbstractServer
     private int balance = 0;
     private ProxyControl ctl;
 
+    //TODO: do we need synchronization?
+
     public BankAccountI(Configuration config) {
         super(config);
         this.config = config;
@@ -24,25 +26,26 @@ public class BankAccountI extends AbstractServer
         this.ctl = ctl;
     }
 
+    // called by Proxy
     @Override
     protected void handleBeginReadBalance(int reqid) {
-
+        this.ctl.endReadBalance(reqid, this.balance);
     }
-
+    // called by Proxy
     @Override
     protected void handleBeginChangeBalance(int reqid, int update) {
-
+        this.balance += update;
+        this.ctl.endChangeBalance(reqid, this.balance);
     }
 
     @Override
-    protected int handleGetState()
-    {
-        return -1;
+    protected int handleGetState(){
+        return this.balance;
     }
 
     @Override
-    protected int handleSetState(int balance)
-    {
-        return -1;
+    protected int handleSetState(int balance){
+        this.balance = balance;
+        return balance;
     }
 }
