@@ -3,13 +3,10 @@ package edu.cmu.rds749.lab2;
 import edu.cmu.rds749.common.AbstractProxy;
 import edu.cmu.rds749.common.BankAccountStub;
 import org.apache.commons.configuration2.Configuration;
+import rds749.Callback_ClientCallbacks_RequestUnsuccessfulException;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.*;
 
 /**
  *
@@ -19,8 +16,8 @@ public class Proxy extends AbstractProxy
 {
     public class Message {
 
-        public final int READBALANCE = 0;
-        public final int CHANGEBALANCE = 1;
+        public final static int READBALANCE = 0;
+        public final static int CHANGEBALANCE = 1;
 
         public int messageType;
         public int value;
@@ -40,13 +37,15 @@ public class Proxy extends AbstractProxy
 
     public class PendingMessageRecord{
         public Set<Long> serverids;
-        public int messageid;
+        public Message message;
         public boolean suppress;
+        public int returnValue;
 
-        public PendingMessageRecord(int messageid, Set<Long> serverids){
+        public PendingMessageRecord(Message message, Set<Long> serverids){
             this.serverids = serverids;
-            this.messageid = messageid;
+            this.message = message;
             this.suppress = false;
+            this.returnValue = 0;
         }
 
         public void reportReception(long serverid){
@@ -55,69 +54,88 @@ public class Proxy extends AbstractProxy
         }
     }
 
-    private ConcurrentLinkedQueue<Message> messageQueue;
-    private ConcurrentHashMap<Integer,PendingMessageRecord> pendingMessageRecords;
-    private Lock quiescenceLock;
-    private Condition quiescenceCondition;
-    private ConcurrentHashMap<Long, BankAccountStub> servers;
+    public class QuiescenseLock{
+        private ReadWriteLock rwlock;
+
+        public QuiescenseLock(){
+            this.rwlock = new ReentrantReadWriteLock(true);
+        }
+
+        /* Declare that there is a message that is being serviced */
+        public void requestBusy(){
+            this.rwlock.readLock().lock();
+        }
+        /* Declare that all copies of a message has been either serviced or failed */
+        public void releaseBusy(){
+            this.rwlock.readLock().unlock();
+        }
+        /* Declare that we want all incoming messages to wait until we finish bringing a server up to speed */
+        public void requestQuiescense(){
+            this.rwlock.writeLock().lock();
+        }
+        /* Declare that we have brought a server up to speed and messages can be continued to be served */
+        public void releaseQuiescense(){
+            this.rwlock.writeLock().unlock();
+        }
+    }
+
+    private Lock recordLock;
+    private HashMap<Integer,PendingMessageRecord> pendingMessageRecords;
+
+    private Lock serverLock;
+    private HashMap<Long, BankAccountStub> servers;
+
+    private QuiescenseLock quiescenseLock;
 
     public Proxy(Configuration config)
     {
         super(config);
-        this.messageQueue = new ConcurrentLinkedQueue<>();
-        this.pendingMessageRecords = new ConcurrentHashMap<>();
-        this.servers = new ConcurrentHashMap<>();
-        this.quiescenceLock = new ReentrantLock();
-        this.quiescenceCondition = this.quiescenceLock.newCondition();
+        this.recordLock = new ReentrantLock();
+        this.pendingMessageRecords = new HashMap<>();
+        this.serverLock = new ReentrantLock();
+        this.servers = new HashMap<>();
+        this.quiescenseLock = new QuiescenseLock();
     }
 
     @Override
     protected void serverRegistered(long id, BankAccountStub stub)
     {
-        BankAccountStub existingStub;
-        Long existingId;
-        Enumeration<BankAccountStub> stubEnum;
-        Enumeration<Long> idEnum;
-        int state;
-        if (servers.isEmpty()){
-            servers.put(id, stub);
-            return;
-        }
-        this.quiescenceLock.lock();
-        try {
-            while (!pendingMessageRecords.isEmpty()) {
-                this.quiescenceCondition.await();
-            }
-            stubEnum = servers.elements();
-            idEnum = servers.keys();
+        // declare that we need quiescense
+        this.quiescenseLock.requestQuiescense();
+        this.serverLock.lock();
+
+        Iterator<Long> serverids = this.servers.keySet().iterator();
+        int state = 0;
+        boolean foundState = false;
+        while(serverids.hasNext()){
+            long selectedId = serverids.next();
+            BankAccountStub selectedStub = this.servers.get(selectedId);
             try {
-                while(true){
-                    existingStub = stubEnum.nextElement();
-                    existingId = idEnum.nextElement();
-                    try {
-                        state = existingStub.getState();
-                    } catch (BankAccountStub.NoConnectionException e){
-                        invalidateServer(existingId);
-                        continue;
-                    }
-                    break;
-                }
-                try {
-                    stub.setState(state);
-                } catch (BankAccountStub.NoConnectionException e){
-                    this.quiescenceLock.unlock();
-                    return;
-                }
-                servers.put(id, stub);
-            } catch (NoSuchElementException e){
-                // all other servers died before quiescence was achieved
-                servers.put(id, stub);
+                state = selectedStub.getState();
+            } catch (BankAccountStub.NoConnectionException e){
+                this.recordLock.lock();
+                this.invalidateServer(selectedId);
+                this.recordLock.unlock();
+                continue;
             }
-        } catch (InterruptedException e){
-            // TODO: probably don't need to do anything here
-        } finally{
-            this.quiescenceLock.unlock();
+            foundState = true;
+            break;
         }
+        // if we found at least one working server with the state, update the new server with it
+        if (foundState){
+            try {
+                stub.setState(state);
+            } catch (BankAccountStub.NoConnectionException e){
+                // server died before we could add it
+                this.serverLock.unlock();
+                this.quiescenseLock.releaseQuiescense();
+                return;
+            }
+        }
+        // either first server or successfully found and updated with new state
+        this.servers.put(id, stub);
+        this.serverLock.unlock();
+        this.quiescenseLock.releaseQuiescense();
     }
 
     // called by Client
@@ -146,30 +164,53 @@ public class Proxy extends AbstractProxy
     }
 
     private void sendToAllServers(Message message){
-        return; // TODO
+        // block until all membership changes finish
+        this.quiescenseLock.requestBusy();
+        this.serverLock.lock();
+
+        Set<Long> validServerIds = new HashSet<>();
+        for (Long serverid : this.servers.keySet()){
+            BankAccountStub stub = this.servers.get(serverid);
+            if (message.messageType == Message.CHANGEBALANCE){
+                try{
+                    stub.beginChangeBalance(message.reqid, message.value);
+                } catch (BankAccountStub.NoConnectionException e){
+                    this.recordLock.lock();
+                    this.invalidateServer(serverid);
+                    this.recordLock.unlock();
+                    continue;
+                }
+                validServerIds.add(serverid);
+            }
+        }
+        this.recordLock.lock();
+        this.pendingMessageRecords.put(message.reqid, new PendingMessageRecord(message, validServerIds));
+        this.recordLock.unlock();
+        this.serverLock.unlock();
     }
 
+    /* Purges all records of a serverid from the data structures
+       REQUIRES serverLock, recordLock TO BE LOCKED ALREADY BEFORE CALLING
+       IF CALLED FROM QUIESCENCE MODE: all messages have been handled
+       ELSE: purge records containing the serverid
+     */
     private void invalidateServer(long serverid){
         List l = new ArrayList<Long>();
-        boolean removedAtleastOneRec = false;
         l.add(serverid);
         serversFailed(l);
+
         servers.remove(serverid);
+        // only happen in non-quiescent mode
         for (PendingMessageRecord rec : pendingMessageRecords.values()){
-            // only happen in non-quiescent mode
             rec.serverids.remove(serverid);
             if (rec.serverids.isEmpty()) {
                 if (!rec.suppress){
-                    // tell client that all servers ahve failed
+                    // TODO: call RequestUnsuccessfulException
                 }
                 pendingMessageRecords.remove(rec);
-                removedAtleastOneRec = true;
+                // THIS SHOULD NOT BLOCK
+                this.quiescenseLock.releaseBusy(); // declare that all messages have been processed
             }
-        }
-        if (pendingMessageRecords.isEmpty() && removedAtleastOneRec){
-            quiescenceLock.lock();
-            quiescenceCondition.signal();
-            quiescenceLock.unlock();
         }
     }
 
