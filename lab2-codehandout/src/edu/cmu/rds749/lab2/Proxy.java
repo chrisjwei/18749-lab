@@ -3,7 +3,6 @@ package edu.cmu.rds749.lab2;
 import edu.cmu.rds749.common.AbstractProxy;
 import edu.cmu.rds749.common.BankAccountStub;
 import org.apache.commons.configuration2.Configuration;
-import rds749.Callback_ClientCallbacks_RequestUnsuccessfulException;
 
 import java.util.*;
 import java.util.concurrent.locks.*;
@@ -55,27 +54,60 @@ public class Proxy extends AbstractProxy
     }
 
     public class QuiescenseLock{
-        private ReadWriteLock rwlock;
+
+        int inflightMessageCount;
+        int quiescenceCount;
+        Lock lock;
+        Condition quiescenceCond;
+        Condition inflightCond;
+
 
         public QuiescenseLock(){
-            this.rwlock = new ReentrantReadWriteLock(true);
+            this.inflightMessageCount = 0;
+            this.quiescenceCount = 0;
+            this.lock = new ReentrantLock();
+            this.quiescenceCond = lock.newCondition();
+            this.inflightCond = lock.newCondition();
         }
 
         /* Declare that there is a message that is being serviced */
         public void requestBusy(){
-            this.rwlock.readLock().lock();
+            this.lock.lock();
+            // block until all membership changes are finished
+            while (this.quiescenceCount != 0){
+                this.quiescenceCond.awaitUninterruptibly();
+            }
+            this.inflightMessageCount += 1;
+            this.lock.unlock();
         }
         /* Declare that all copies of a message has been either serviced or failed */
         public void releaseBusy(){
-            this.rwlock.readLock().unlock();
+            this.lock.lock();
+            this.inflightMessageCount -= 1;
+            if (this.inflightMessageCount == 0){
+                this.inflightCond.signalAll();
+            }
+            this.lock.unlock();
         }
         /* Declare that we want all incoming messages to wait until we finish bringing a server up to speed */
         public void requestQuiescense(){
-            this.rwlock.writeLock().lock();
+            this.lock.lock();
+            // change quiescense count so future messages are blocked
+            this.quiescenceCount += 1;
+            // wait until all inflight messages are serviced
+            while (this.inflightMessageCount != 0){
+                this.inflightCond.awaitUninterruptibly();
+            }
+            this.lock.unlock();
         }
         /* Declare that we have brought a server up to speed and messages can be continued to be served */
         public void releaseQuiescense(){
-            this.rwlock.writeLock().unlock();
+            this.lock.lock();
+            this.quiescenceCount -= 1;
+            if (this.quiescenceCount == 0){
+                this.quiescenceCond.signalAll();
+            }
+            this.lock.unlock();
         }
     }
 
