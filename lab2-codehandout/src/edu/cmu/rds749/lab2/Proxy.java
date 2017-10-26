@@ -52,10 +52,7 @@ public class Proxy extends AbstractProxy
         }
 
         public boolean reportLostMessage(long serverid){
-            boolean removed = this.serverids.remove(serverid);
-            assert(removed); // TODO: remove this
-            boolean isEmpty = this.serverids.isEmpty();
-            return isEmpty;
+            return this.reportReception(serverid);
         }
     }
 
@@ -147,6 +144,7 @@ public class Proxy extends AbstractProxy
         Set<Long> invalidServerIds = new HashSet<>();
         for (long serverid : this.servers.keySet()){
             BankAccountStub selectedStub = this.servers.get(serverid);
+            assert(selectedStub != null); //TODO: remove this
             try {
                 state = selectedStub.getState();
             } catch (BankAccountStub.NoConnectionException e){
@@ -184,19 +182,34 @@ public class Proxy extends AbstractProxy
     protected void beginReadBalance(int reqid)
     {
         System.out.printf("Received a read balance message with id %d%n", reqid);
-        sendToAllServers(new Message(Message.READBALANCE, reqid));
+        final Message m = new Message(Message.READBALANCE, reqid);
+        Thread t = new Thread(new Runnable(){
+            public void run(){
+                sendToAllServers(m);
+            }
+        });
+        t.start();
+        System.out.printf("Forked a thread with pid %d to handle request %d%n", t.getId(), reqid);
     }
     // called by Client
     @Override
     protected void beginChangeBalance(int reqid, int update)
     {
         System.out.printf("Received a change balance message with id %d%n", reqid);
-        sendToAllServers(new Message(Message.CHANGEBALANCE, reqid, update));
+        final Message m = new Message(Message.CHANGEBALANCE, reqid, update);
+        Thread t = new Thread(new Runnable(){
+            public void run(){
+                sendToAllServers(m);
+            }
+        });
+        t.start();
+        System.out.printf("Forked a thread with pid %d to handle request %d%n", t.getId(), reqid);
     }
 
     private void endBalanceHelper(long serverid, int reqid, int balance, int messageType){
         this.recordLock.lock();
         PendingMessageRecord rec = this.pendingMessageRecords.get(reqid);
+        assert(rec != null); //TODO: remove this
         // if first message to go out, send return value and suppress further messages
         if (!rec.suppress){
             rec.suppress = true;
@@ -232,12 +245,18 @@ public class Proxy extends AbstractProxy
         this.quiescenseLock.requestBusy();
         this.serverLock.lock();
 
-        Set<Long> validServerIds = new HashSet<>();
+        // add to message record before we start sending out messages, so threads can respond to the message
+        // as soon as possible without waiting for us to invalidate servers.
+        this.recordLock.lock();
+        this.pendingMessageRecords.put(message.reqid, new PendingMessageRecord(message, this.servers.keySet()));
+        this.recordLock.unlock();
+
         Set<Long> invalidServerIds = new HashSet<>();
         //TODO: fork a thread for each send
         for (Long serverid : this.servers.keySet()){
             System.out.printf("Attempting to send message %d to server %d%n", message.reqid, serverid);
             BankAccountStub stub = this.servers.get(serverid);
+            assert(stub != null); //TODO: remove this
             try{
                 if (message.messageType == Message.CHANGEBALANCE) {
                     stub.beginChangeBalance(message.reqid, message.value);
@@ -250,24 +269,10 @@ public class Proxy extends AbstractProxy
                 continue;
             }
             System.out.printf("Message %d sent successfully to server %d %n", message.reqid, serverid);
-            validServerIds.add(serverid);
         }
-        // Report that the message failed to send since no replicas received the message
-        if (validServerIds.isEmpty()){
-            System.out.printf("Request to send message %d unsuccessful%n", message.reqid);
-            this.clientProxy.RequestUnsuccessfulException(message.reqid);
-        }
-        else {
-            this.recordLock.lock();
-            this.pendingMessageRecords.put(message.reqid, new PendingMessageRecord(message, validServerIds));
-            this.recordLock.unlock();
-        }
-        // Remove servers that failed to respond
-        if (!invalidServerIds.isEmpty()){
-            this.recordLock.lock();
-            this.invalidateServers(invalidServerIds);
-            this.recordLock.unlock();
-        }
+        this.recordLock.lock();
+        this.invalidateServers(invalidServerIds);
+        this.recordLock.unlock();
         this.serverLock.unlock();
     }
 

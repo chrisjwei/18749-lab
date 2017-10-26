@@ -29,17 +29,36 @@ public class BankAccountI extends AbstractServer
     // called by Proxy
     @Override
     protected void handleBeginReadBalance(int reqid) {
+        final int reqid_f = reqid;
+        final int balance_f = this.balance;
+        final ProxyControl ctl_f = this.ctl;
         System.out.printf("Received a read balance message with id %d%n", reqid);
-        this.ctl.endReadBalance(reqid, this.balance);
-        System.out.printf("Sent a read balance message with id %d%n", reqid);
+        Thread t = new Thread(new Runnable(){
+            public void run(){
+                ctl_f.endReadBalance(reqid_f, balance_f);
+                System.out.printf("Sent a read balance message with id %d%n", reqid_f);
+            }
+        });
+        t.start();
+        System.out.printf("Forked a thread with pid %d to handle message &d%n", t.getId(), reqid);
     }
     // called by Proxy
     @Override
     protected void handleBeginChangeBalance(int reqid, int update) {
-        System.out.printf("Received a change balance message with id %d%n", reqid);
         this.balance += update;
-        this.ctl.endChangeBalance(reqid, this.balance);
-        System.out.printf("Sent a change balance message with id %d%n", reqid);
+
+        final int reqid_f = reqid;
+        final int balance_f = this.balance;
+        final ProxyControl ctl_f = this.ctl;
+        System.out.printf("Received a change balance message with id %d%n", reqid);
+        Thread t = new Thread(new Runnable(){
+            public void run(){
+                ctl_f.endChangeBalance(reqid_f, balance_f);
+                System.out.printf("Sent a change balance message with id %d%n", reqid_f);
+            }
+        });
+        t.start();
+        System.out.printf("Forked a thread with pid %d to handle message &d%n", t.getId(), reqid);
     }
 
     @Override
