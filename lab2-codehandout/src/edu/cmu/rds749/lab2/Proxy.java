@@ -140,8 +140,8 @@ public class Proxy extends AbstractProxy
         this.quiescenseLock.requestQuiescense();
         this.serverLock.lock();
 
+        // default state
         int state = 0;
-        boolean foundState = false;
         Set<Long> invalidServerIds = new HashSet<>();
         for (long serverid : this.servers.keySet()){
             BankAccountStub selectedStub = this.servers.get(serverid);
@@ -152,7 +152,6 @@ public class Proxy extends AbstractProxy
                 invalidServerIds.add(serverid);
                 continue;
             }
-            foundState = true;
             break;
         }
         // Remove servers that failed to respond
@@ -162,15 +161,13 @@ public class Proxy extends AbstractProxy
             this.recordLock.unlock();
         }
         // if we found at least one working server with the state, update the new server with it
-        if (foundState){
-            try {
-                stub.setState(state);
-            } catch (BankAccountStub.NoConnectionException e){
-                // server died before we could add it
-                this.serverLock.unlock();
-                this.quiescenseLock.releaseQuiescense();
-                return;
-            }
+        try {
+            stub.setState(state);
+        } catch (BankAccountStub.NoConnectionException e){
+            // server died before we could add it
+            this.serverLock.unlock();
+            this.quiescenseLock.releaseQuiescense();
+            return;
         }
         // either first server or successfully found and updated with new state
         this.servers.put(id, stub);
@@ -232,12 +229,14 @@ public class Proxy extends AbstractProxy
     @Override
     protected void endReadBalance(long serverid, int reqid, int balance)
     {
+        System.out.printf("Recieved read balance=%d from server %d for request %d%n", balance, serverid, reqid);
         endBalanceHelper(serverid, reqid, balance, Message.READBALANCE);
     }
     // called by Servers
     @Override
     protected void endChangeBalance(long serverid, int reqid, int balance)
     {
+        System.out.printf("Recieved change balance=%d from server %d for request %d%n", balance, serverid, reqid);
         endBalanceHelper(serverid, reqid, balance, Message.CHANGEBALANCE);
     }
 
