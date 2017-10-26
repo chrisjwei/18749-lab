@@ -5,6 +5,7 @@ import edu.cmu.rds749.common.BankAccountStub;
 import org.apache.commons.configuration2.Configuration;
 
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.concurrent.locks.*;
 
 /**
@@ -240,7 +241,7 @@ public class Proxy extends AbstractProxy
         endBalanceHelper(serverid, reqid, balance, Message.CHANGEBALANCE);
     }
 
-    private void sendToAllServers(Message message){
+    private void sendToAllServers(final Message message){
         // block until all membership changes finish
         this.quiescenseLock.requestBusy();
         this.serverLock.lock();
@@ -260,25 +261,48 @@ public class Proxy extends AbstractProxy
         this.pendingMessageRecords.put(message.reqid, rec);
         this.recordLock.unlock();
 
-        Set<Long> invalidServerIds = new HashSet<>();
-        //TODO: fork a thread for each send
-        for (Long serverid : this.servers.keySet()){
-            System.out.printf("Attempting to send message %d to server %d%n", message.reqid, serverid);
-            BankAccountStub stub = this.servers.get(serverid);
-            assert(stub != null); //TODO: remove this
-            try{
-                if (message.messageType == Message.CHANGEBALANCE) {
-                    stub.beginChangeBalance(message.reqid, message.value);
-                } else{
-                    stub.beginReadBalance(message.reqid);
+        // Create a new thread pool to handle each request
+        ExecutorService executorService = Executors.newFixedThreadPool(this.servers.keySet().size());
+        final HashMap<Long, BankAccountStub> servers = this.servers;
+        // Generate a list of tasks that return either a failed serverid or null
+        Collection<Callable<Long>> tasks = new ArrayList<>();
+        for (final Long serverid : this.servers.keySet()) {
+            Callable<Long> task = new Callable<Long>() {
+                public Long call() {
+                    System.out.printf("Attempting to send message %d to server %d%n", message.reqid, serverid);
+                    BankAccountStub stub = servers.get(serverid);
+                    assert(stub != null); //TODO: remove this
+                    try{
+                        if (message.messageType == Message.CHANGEBALANCE) {
+                            stub.beginChangeBalance(message.reqid, message.value);
+                        } else{
+                            stub.beginReadBalance(message.reqid);
+                        }
+                    } catch (BankAccountStub.NoConnectionException e){
+                        System.out.printf("Server %d threw NoConnectionException%n", serverid);
+                        return serverid;
+                    }
+                    System.out.printf("Message %d sent successfully to server %d %n", message.reqid, serverid);
+                    return null;
                 }
-            } catch (BankAccountStub.NoConnectionException e){
-                System.out.printf("Server %d threw NoConnectionException%n", serverid);
-                invalidServerIds.add(serverid);
-                continue;
-            }
-            System.out.printf("Message %d sent successfully to server %d %n", message.reqid, serverid);
+            };
+            tasks.add(task);
         }
+
+        // Collect all invalidServerIds from the result of the executor
+        HashSet<Long> invalidServerIds = new HashSet<>();
+        List<Future<Long>> results;
+        try {
+            results = executorService.invokeAll(tasks);
+            for (Future<Long> result : results){
+                Long l = null;
+                try { l = result.get(); } catch (ExecutionException e){}
+                if (l != null){
+                    invalidServerIds.add(l);
+                }
+            }
+        } catch (InterruptedException e) {}
+
         this.recordLock.lock();
         this.invalidateServers(invalidServerIds);
         this.recordLock.unlock();
