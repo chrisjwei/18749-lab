@@ -40,7 +40,7 @@ public class BankAccountI extends AbstractServer
             }
         });
         t.start();
-        System.out.printf("Forked a thread with pid %d to handle message &d%n", t.getId(), reqid);
+        System.out.printf("Forked a thread with pid %d to handle message %d%n", t.getId(), reqid);
     }
     // called by Proxy
     @Override
@@ -58,7 +58,7 @@ public class BankAccountI extends AbstractServer
             }
         });
         t.start();
-        System.out.printf("Forked a thread with pid %d to handle message &d%n", t.getId(), reqid);
+        System.out.printf("Forked a thread with pid %d to handle message %d%n", t.getId(), reqid);
     }
 
     @Override

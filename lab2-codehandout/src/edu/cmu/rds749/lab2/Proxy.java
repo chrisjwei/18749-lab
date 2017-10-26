@@ -245,10 +245,19 @@ public class Proxy extends AbstractProxy
         this.quiescenseLock.requestBusy();
         this.serverLock.lock();
 
+        // if no servers to send to, simply send the exception and undo
+        if (this.servers.isEmpty()){
+            this.clientProxy.RequestUnsuccessfulException(message.reqid);
+            this.serverLock.unlock();
+            this.quiescenseLock.releaseBusy();
+            return;
+        }
+
         // add to message record before we start sending out messages, so threads can respond to the message
         // as soon as possible without waiting for us to invalidate servers.
+        PendingMessageRecord rec = new PendingMessageRecord(message, new HashSet<>(this.servers.keySet()));
         this.recordLock.lock();
-        this.pendingMessageRecords.put(message.reqid, new PendingMessageRecord(message, this.servers.keySet()));
+        this.pendingMessageRecords.put(message.reqid, rec);
         this.recordLock.unlock();
 
         Set<Long> invalidServerIds = new HashSet<>();
