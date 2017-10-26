@@ -1,0 +1,11 @@
+sendToAllServers() ensures that all messages for a given UUID are sent before 
+any messages for a different UUID are sent. This is accomplished by locking the
+proxy's serverLock before it can send to any servers. 
+
+Additionally, each call to beginChangeBalance() or beginReadBalance() must
+return immediately, or else throw a NoConnectionException which is then used to
+invalidate the server and remove it from the membership group. This ensures that
+all servers that remain a part of the membership group successfully received the
+message for UUID u before any receive the message for UUID u + 1.
+
+
