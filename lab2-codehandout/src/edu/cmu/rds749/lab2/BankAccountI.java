@@ -29,13 +29,17 @@ public class BankAccountI extends AbstractServer
     // called by Proxy
     @Override
     protected void handleBeginReadBalance(int reqid) {
+        System.out.printf("Received a read balance message with id %d%n", reqid);
         this.ctl.endReadBalance(reqid, this.balance);
+        System.out.printf("Sent a read balance message with id %d%n", reqid);
     }
     // called by Proxy
     @Override
     protected void handleBeginChangeBalance(int reqid, int update) {
+        System.out.printf("Received a change balance message with id %d%n", reqid);
         this.balance += update;
         this.ctl.endChangeBalance(reqid, this.balance);
+        System.out.printf("Sent a change balance message with id %d%n", reqid);
     }
 
     @Override

@@ -38,18 +38,24 @@ public class Proxy extends AbstractProxy
         public Set<Long> serverids;
         public Message message;
         public boolean suppress;
-        public int returnValue;
 
         public PendingMessageRecord(Message message, Set<Long> serverids){
             this.serverids = serverids;
             this.message = message;
             this.suppress = false;
-            this.returnValue = 0;
         }
 
-        public void reportReception(long serverid){
+        public boolean reportReception(long serverid){
             boolean removed = this.serverids.remove(serverid);
             assert(removed); // TODO: remove this
+            return this.serverids.isEmpty();
+        }
+
+        public boolean reportLostMessage(long serverid){
+            boolean removed = this.serverids.remove(serverid);
+            assert(removed); // TODO: remove this
+            boolean isEmpty = this.serverids.isEmpty();
+            return isEmpty;
         }
     }
 
@@ -136,22 +142,25 @@ public class Proxy extends AbstractProxy
         this.quiescenseLock.requestQuiescense();
         this.serverLock.lock();
 
-        Iterator<Long> serverids = this.servers.keySet().iterator();
         int state = 0;
         boolean foundState = false;
-        while(serverids.hasNext()){
-            long selectedId = serverids.next();
-            BankAccountStub selectedStub = this.servers.get(selectedId);
+        Set<Long> invalidServerIds = new HashSet<>();
+        for (long serverid : this.servers.keySet()){
+            BankAccountStub selectedStub = this.servers.get(serverid);
             try {
                 state = selectedStub.getState();
             } catch (BankAccountStub.NoConnectionException e){
-                this.recordLock.lock();
-                this.invalidateServer(selectedId);
-                this.recordLock.unlock();
+                invalidServerIds.add(serverid);
                 continue;
             }
             foundState = true;
             break;
+        }
+        // Remove servers that failed to respond
+        if (!invalidServerIds.isEmpty()){
+            this.recordLock.lock();
+            this.invalidateServers(invalidServerIds);
+            this.recordLock.unlock();
         }
         // if we found at least one working server with the state, update the new server with it
         if (foundState){
@@ -174,25 +183,48 @@ public class Proxy extends AbstractProxy
     @Override
     protected void beginReadBalance(int reqid)
     {
-        System.out.println("(In Proxy)");
+        System.out.printf("Received a read balance message with id %d%n", reqid);
+        sendToAllServers(new Message(Message.READBALANCE, reqid));
     }
     // called by Client
     @Override
     protected void beginChangeBalance(int reqid, int update)
     {
-        System.out.println("(In Proxy)");
+        System.out.printf("Received a change balance message with id %d%n", reqid);
+        sendToAllServers(new Message(Message.CHANGEBALANCE, reqid, update));
     }
+
+    private void endBalanceHelper(long serverid, int reqid, int balance, int messageType){
+        this.recordLock.lock();
+        PendingMessageRecord rec = this.pendingMessageRecords.get(reqid);
+        // if first message to go out, send return value and suppress further messages
+        if (!rec.suppress){
+            rec.suppress = true;
+            if (messageType == Message.CHANGEBALANCE){
+                this.clientProxy.endChangeBalance(reqid, balance);
+            } else {
+                this.clientProxy.endReadBalance(reqid, balance);
+            }
+        }
+        // report reception to the pending message pool
+        if (rec.reportReception(serverid)){
+            pendingMessageRecords.remove(reqid);
+            this.quiescenseLock.releaseBusy(); // declare that all messages have been processed
+        }
+        this.recordLock.unlock();
+    }
+
     // called by Servers
     @Override
     protected void endReadBalance(long serverid, int reqid, int balance)
     {
-        System.out.println("(In Proxy)");
+        endBalanceHelper(serverid, reqid, balance, Message.READBALANCE);
     }
     // called by Servers
     @Override
     protected void endChangeBalance(long serverid, int reqid, int balance)
     {
-        System.out.println("(In Proxy)");
+        endBalanceHelper(serverid, reqid, balance, Message.CHANGEBALANCE);
     }
 
     private void sendToAllServers(Message message){
@@ -201,23 +233,41 @@ public class Proxy extends AbstractProxy
         this.serverLock.lock();
 
         Set<Long> validServerIds = new HashSet<>();
+        Set<Long> invalidServerIds = new HashSet<>();
+        //TODO: fork a thread for each send
         for (Long serverid : this.servers.keySet()){
+            System.out.printf("Attempting to send message %d to server %d%n", message.reqid, serverid);
             BankAccountStub stub = this.servers.get(serverid);
-            if (message.messageType == Message.CHANGEBALANCE){
-                try{
+            try{
+                if (message.messageType == Message.CHANGEBALANCE) {
                     stub.beginChangeBalance(message.reqid, message.value);
-                } catch (BankAccountStub.NoConnectionException e){
-                    this.recordLock.lock();
-                    this.invalidateServer(serverid);
-                    this.recordLock.unlock();
-                    continue;
+                } else{
+                    stub.beginReadBalance(message.reqid);
                 }
-                validServerIds.add(serverid);
+            } catch (BankAccountStub.NoConnectionException e){
+                System.out.printf("Server %d threw NoConnectionException%n", serverid);
+                invalidServerIds.add(serverid);
+                continue;
             }
+            System.out.printf("Message %d sent successfully to server %d %n", message.reqid, serverid);
+            validServerIds.add(serverid);
         }
-        this.recordLock.lock();
-        this.pendingMessageRecords.put(message.reqid, new PendingMessageRecord(message, validServerIds));
-        this.recordLock.unlock();
+        // Report that the message failed to send since no replicas received the message
+        if (validServerIds.isEmpty()){
+            System.out.printf("Request to send message %d unsuccessful%n", message.reqid);
+            this.clientProxy.RequestUnsuccessfulException(message.reqid);
+        }
+        else {
+            this.recordLock.lock();
+            this.pendingMessageRecords.put(message.reqid, new PendingMessageRecord(message, validServerIds));
+            this.recordLock.unlock();
+        }
+        // Remove servers that failed to respond
+        if (!invalidServerIds.isEmpty()){
+            this.recordLock.lock();
+            this.invalidateServers(invalidServerIds);
+            this.recordLock.unlock();
+        }
         this.serverLock.unlock();
     }
 
@@ -226,22 +276,24 @@ public class Proxy extends AbstractProxy
        IF CALLED FROM QUIESCENCE MODE: all messages have been handled
        ELSE: purge records containing the serverid
      */
-    private void invalidateServer(long serverid){
+    private void invalidateServers(Set<Long> serverids){
         List l = new ArrayList<Long>();
-        l.add(serverid);
+        l.addAll(serverids);
         serversFailed(l);
 
-        servers.remove(serverid);
-        // only happen in non-quiescent mode
-        for (PendingMessageRecord rec : pendingMessageRecords.values()){
-            rec.serverids.remove(serverid);
-            if (rec.serverids.isEmpty()) {
-                if (!rec.suppress){
-                    // TODO: call RequestUnsuccessfulException
+        // remove each server id
+        for (Long serverid : serverids){
+            servers.remove(serverid);
+            // only happen in non-quiescent mode
+            for (PendingMessageRecord rec : pendingMessageRecords.values()){
+                if (rec.reportLostMessage(serverid)){
+                    // lost last message, and no response from anyone, so throw error
+                    if (!rec.suppress){
+                        this.clientProxy.RequestUnsuccessfulException(rec.message.reqid);
+                    }
+                    pendingMessageRecords.remove(rec.message.reqid);
+                    this.quiescenseLock.releaseBusy(); // declare that all messages have been processed
                 }
-                pendingMessageRecords.remove(rec);
-                // THIS SHOULD NOT BLOCK
-                this.quiescenseLock.releaseBusy(); // declare that all messages have been processed
             }
         }
     }
