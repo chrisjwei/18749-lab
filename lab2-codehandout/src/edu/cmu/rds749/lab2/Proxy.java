@@ -313,23 +313,23 @@ public class Proxy extends AbstractProxy
        IF CALLED FROM QUIESCENCE MODE: all messages have been handled
        ELSE: purge records containing the serverid
      */
-    private void invalidateServers(Set<Long> serverids){
-        List l = new ArrayList<Long>();
-        l.addAll(serverids);
-        serversFailed(l);
-
+    private void invalidateServers(Collection<Long> serverids){
         // remove each server id
         for (Long serverid : serverids){
-            servers.remove(serverid);
-            // only happen in non-quiescent mode
-            for (PendingMessageRecord rec : pendingMessageRecords.values()){
-                if (rec.reportLostMessage(serverid)){
-                    // lost last message, and no response from anyone, so throw error
-                    if (!rec.suppress){
-                        this.clientProxy.RequestUnsuccessfulException(rec.message.reqid);
+            // only invalidate if server has not been invalidated already
+            if (servers.containsKey(serverid)){
+                System.out.printf("Invalidating server %d%n", serverid);
+                servers.remove(serverid);
+                // only happen in non-quiescent mode
+                for (PendingMessageRecord rec : pendingMessageRecords.values()){
+                    if (rec.reportLostMessage(serverid)){
+                        // lost last message, and no response from anyone, so throw error
+                        if (!rec.suppress){
+                            this.clientProxy.RequestUnsuccessfulException(rec.message.reqid);
+                        }
+                        pendingMessageRecords.remove(rec.message.reqid);
+                        this.quiescenseLock.releaseBusy(); // declare that all messages have been processed
                     }
-                    pendingMessageRecords.remove(rec.message.reqid);
-                    this.quiescenseLock.releaseBusy(); // declare that all messages have been processed
                 }
             }
         }
@@ -338,6 +338,10 @@ public class Proxy extends AbstractProxy
     @Override
     protected void serversFailed(List<Long> failedServers)
     {
+        System.out.printf("Server heartbeat missed... invalidating%n");
         super.serversFailed(failedServers);
+        this.serverLock.lock();
+        invalidateServers(failedServers);
+        this.serverLock.unlock();
     }
 }
