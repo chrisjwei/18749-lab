@@ -4,6 +4,8 @@ import edu.cmu.rds749.common.AbstractServer;
 import org.apache.commons.configuration2.Configuration;
 import rds749.Checkpoint;
 
+import edu.cmu.rds749.lab3.Proxy.MessageType;
+import edu.cmu.rds749.lab3.Proxy.Message;
 import java.util.PriorityQueue;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -17,30 +19,6 @@ public class BankAccountI extends AbstractServer
 {
     public enum ServerType {
         PRIMARY, BACKUP
-    }
-    public enum MessageType{
-        READ, UPDATE
-    }
-
-    private class Message implements Comparable<Message>{
-        public int reqid;
-        public MessageType type;
-        public int value;
-
-        public int compareTo(Message o){
-            return ((Integer)this.reqid).compareTo(o.reqid);
-        }
-
-        public Message(MessageType type, int reqid){
-            this.type = type;
-            this.reqid = reqid;
-        }
-
-        public Message(MessageType type, int reqid, int value){
-            this.type = type;
-            this.reqid = reqid;
-            this.value = value;
-        }
     }
 
     private int balance = 0;
