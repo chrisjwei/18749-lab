@@ -3,14 +3,11 @@ package edu.cmu.rds749.lab3;
 import edu.cmu.rds749.common.AbstractProxy;
 import edu.cmu.rds749.common.BankAccountStub;
 import org.apache.commons.configuration2.Configuration;
+import rds749.Checkpoint;
 import rds749.IncorrectOperation;
 
 import java.util.*;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.*;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -76,6 +73,8 @@ public class Proxy extends AbstractProxy
     private HashMap<Long, BankAccountStub> servers;
     private long primaryServerId;
 
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+
     public Proxy(Configuration config)
     {
         super(config);
@@ -84,7 +83,86 @@ public class Proxy extends AbstractProxy
         this.serverLock = new ReentrantLock();
         this.servers = new HashMap<>();
         this.primaryServerId = -1;
-        //TODO: start timer that periodically updates backup servers with newest checkpoint
+        final Proxy p = this;
+        this.scheduler.scheduleAtFixedRate(
+            new Runnable() {
+                public void run() {
+                    Checkpoint c = null;
+                    p.serverLock.lock();
+                    System.out.println("*** CHECKPOINT START ***");
+                    if (p.servers.isEmpty()){
+                        p.serverLock.unlock();
+                        return;
+                    }
+                    // get checkpoint from primary server
+                    while(c == null){
+                        try {
+                            System.out.printf("* Getting checkpoint from primary server %d%n", p.primaryServerId);
+                            c = p.servers.get(p.primaryServerId).getState();
+                        }
+                        catch (BankAccountStub.NoConnectionException e){
+                            System.out.printf("* Primary server %d has failed %n", p.primaryServerId);
+                            // primary has failed, elect new primary
+                            p.electNewPrimary();
+                            // if no eligible primaries can be elected, return
+                            if (p.primaryServerId == -1){
+                                p.serverLock.unlock();
+                                System.out.println("* No valid primaries could be found");
+                                return;
+                            }
+                            c = null;
+                        }
+                    }
+                    final Checkpoint checkpoint = c;
+                    System.out.printf("* Found checkpoint with state %d from server %d%n", c.state, p.primaryServerId);
+                    ExecutorService executorService = Executors.newFixedThreadPool(p.servers.keySet().size());
+                    final HashMap<Long, BankAccountStub> servers = p.servers;
+                    // Generate a list of tasks that return either a failed serverid or null
+                    Collection<Callable<Long>> tasks = new ArrayList<>();
+                    for (final Long serverid : p.servers.keySet()) {
+                        Callable<Long> task = new Callable<Long>() {
+                            public Long call() {
+                                if (serverid == p.primaryServerId){
+                                    return null; // skip the primary server
+                                }
+                                System.out.printf("* Attempting to send set state to server %d%n", serverid);
+                                BankAccountStub stub = servers.get(serverid);
+                                assert(stub != null);
+                                try{
+                                    stub.setState(checkpoint);
+                                } catch (BankAccountStub.NoConnectionException e){
+                                    System.out.printf("* Server %d threw NoConnectionException%n", serverid);
+                                    return serverid;
+                                }
+                                System.out.printf("* State successfully sent to server %d %n", serverid);
+                                return null;
+                            }
+                        };
+                        tasks.add(task);
+                    }
+
+                    // Collect all invalidServerIds from the result of the executor
+                    HashSet<Long> invalidServerIds = new HashSet<>();
+                    List<Future<Long>> results;
+                    try {
+                        results = executorService.invokeAll(tasks);
+                        for (Future<Long> result : results){
+                            Long l = null;
+                            try { l = result.get(); } catch (ExecutionException e){}
+                            if (l != null){
+                                invalidServerIds.add(l);
+                            }
+                        }
+                    } catch (InterruptedException e) {}
+
+                    p.recordLock.lock();
+                    p.invalidateServers(invalidServerIds);
+                    p.recordLock.unlock();
+                    p.serverLock.unlock();
+                    System.out.println("*** CHECKPOINT END ***");
+                }
+            }
+            ,0, this.config.getLong("CheckpointFreq"), TimeUnit.MILLISECONDS);
     }
 
     @Override
