@@ -88,6 +88,8 @@ public class Proxy extends AbstractProxy
             new Runnable() {
                 public void run() {
                     Checkpoint c = null;
+                    HashSet<Long> invalidServerIds = new HashSet<>();
+
                     p.serverLock.lock();
                     System.out.println("*** CHECKPOINT START ***");
                     if (p.servers.isEmpty()){
@@ -102,13 +104,13 @@ public class Proxy extends AbstractProxy
                         }
                         catch (BankAccountStub.NoConnectionException e){
                             System.out.printf("* Primary server %d has failed %n", p.primaryServerId);
+                            invalidServerIds.add(p.primaryServerId);
                             // primary has failed, elect new primary
                             p.electNewPrimary();
                             // if no eligible primaries can be elected, return
                             if (p.primaryServerId == -1){
-                                p.serverLock.unlock();
                                 System.out.println("* No valid primaries could be found");
-                                return;
+                                break;
                             }
                             c = null;
                         }
@@ -141,8 +143,7 @@ public class Proxy extends AbstractProxy
                         tasks.add(task);
                     }
 
-                    // Collect all invalidServerIds from the result of the executor
-                    HashSet<Long> invalidServerIds = new HashSet<>();
+                    // Add invalid servers to the list
                     List<Future<Long>> results;
                     try {
                         results = executorService.invokeAll(tasks);
