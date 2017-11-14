@@ -95,11 +95,11 @@ public class BankAccountI extends AbstractServer
     protected int handleSetState(Checkpoint checkpoint)
     {
         this.lock.lock();
-        Message m = null;
-        // remove all messages with reqids <= the checkpoints reqid
-        while (m != null || m.reqid < checkpoint.reqid){
+        Message m;
+        do{
             m = this.messageQueue.poll(); // pop oldest message
-        }
+        } while(m != null || m.reqid < checkpoint.reqid);
+        // remove all messages with reqids <= the checkpoints reqid
         assert(m.reqid == checkpoint.reqid);
         this.balance = checkpoint.state;
         this.lock.unlock();
@@ -111,10 +111,13 @@ public class BankAccountI extends AbstractServer
     {
         this.lock.lock();
         this.serverType = ServerType.PRIMARY;
-        Message m = null;
+        Message m;
         // go through all messages in message queue and process them as the primary
-        while (m != null){
+        while (true){
             m = this.messageQueue.poll(); // pop oldest message
+            if (m == null){
+                break;
+            }
             this.handleMessage(m); // process message
         }
         this.lock.unlock();
