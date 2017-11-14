@@ -256,7 +256,7 @@ public class Proxy extends AbstractProxy
         this.recordLock.unlock();
         this.serverLock.unlock();
     }
-
+    // TODO: add list of invalid server ids as input
     private void electNewPrimary(){
         HashSet<Long> invalidServerIds = new HashSet<>();
         this.primaryServerId = -1;
@@ -349,9 +349,7 @@ public class Proxy extends AbstractProxy
             }
         }
         // report reception to the pending message pool
-        if (rec.reportReception(serverid)){
-            pendingMessageRecords.remove(reqid);
-        }
+        rec.reportReception(serverid);
         this.recordLock.unlock();
     }
 

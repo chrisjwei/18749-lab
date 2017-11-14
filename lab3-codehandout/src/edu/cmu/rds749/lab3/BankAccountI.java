@@ -6,7 +6,10 @@ import rds749.Checkpoint;
 
 import edu.cmu.rds749.lab3.Proxy.MessageType;
 import edu.cmu.rds749.lab3.Proxy.Message;
+
+import java.util.LinkedList;
 import java.util.PriorityQueue;
+import java.util.Queue;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -26,7 +29,7 @@ public class BankAccountI extends AbstractServer
     private Checkpoint checkpoint = null;
 
     private ServerType serverType;
-    private PriorityQueue<Message> messageQueue;
+    private Queue<Message> messageQueue;
     private int lastReqid;
 
     private Lock lock;
@@ -36,7 +39,7 @@ public class BankAccountI extends AbstractServer
         /* By default, a new bank account should be declared as BACKUP, so if messages come in before the SetPrimary or
          * SetBackup is called, the messages will not get lost */
         this.serverType = ServerType.BACKUP;
-        this.messageQueue = new PriorityQueue<>();
+        this.messageQueue = new LinkedList<>();
         /* lastReqId allows us to create a checkpoint, providing the checkpoint with the most recently consumed message
          * so backups know how to prune their logs */
         this.lastReqid = -1;
